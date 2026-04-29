@@ -196,11 +196,38 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
       processor.connect(sink);
       sink.connect(audioContext.destination);
 
+      let audioChunkCount = 0;
+      let commitDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+      
       processor.onaudioprocess = event => {
         const input = event.inputBuffer.getChannelData(0);
         const socket = socketRef.current;
         if (!sessionActiveRef.current || !realtimeReadyRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
         sendRealtimeEvent({ type: 'input_audio_buffer.append', audio: float32ToPcmBase64(input) });
+        
+        // Clear existing debounce timer
+        if (commitDebounceTimer) clearTimeout(commitDebounceTimer);
+        
+        // Calculate RMS to detect if user is speaking
+        let sumSquares = 0;
+        for (let i = 0; i < input.length; i++) {
+          sumSquares += input[i]! * input[i]!;
+        }
+        const rms = Math.sqrt(sumSquares / input.length);
+        
+        // Only commit after detecting speech and then a pause
+        if (rms > 0.02) {
+          // User is speaking, reset counter
+          audioChunkCount = 0;
+        } else {
+          // Potential silence, increment counter
+          audioChunkCount++;
+          // After ~500ms of silence (assuming ~100ms per buffer), commit the buffer
+          if (audioChunkCount >= 5) {
+            sendRealtimeEvent({ type: 'input_audio_buffer.commit' });
+            audioChunkCount = 0;
+          }
+        }
       };
 
       micRef.current = { stream, audioContext, source, filter, analyser, processor, sink, rafId: null };

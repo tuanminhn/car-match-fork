@@ -231,6 +231,11 @@ export function VoiceStudio() {
           type: "input_audio_buffer.append",
           audio: float32ToPcmBase64(input),
         });
+        
+        // Commit buffer sau mỗi lần gửi để báo hiệu đã xong 1 chunk âm thanh
+        sendRealtimeEvent({
+          type: "input_audio_buffer.commit",
+        });
       };
 
       micRef.current = {
