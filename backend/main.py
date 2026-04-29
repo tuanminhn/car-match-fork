@@ -165,17 +165,17 @@ def load_settings() -> Settings:
         )
         or "gummy-realtime-v1",
         realtime_vad_threshold=float(
-            env_first("QWEN_OMNI_REALTIME_VAD_THRESHOLD", default="0.65") or "0.65"
+            env_first("QWEN_OMNI_REALTIME_VAD_THRESHOLD", default="0.5") or "0.5"
         ),
         realtime_vad_silence_ms=int(
-            env_first("QWEN_OMNI_REALTIME_SILENCE_MS", default="2000") or "2000"
+            env_first("QWEN_OMNI_REALTIME_SILENCE_MS", default="3000") or "3000"
         ),
         realtime_vad_prefix_padding_ms=int(
             env_first(
                 "QWEN_OMNI_REALTIME_PREFIX_PADDING_MS",
-                default="800",
+                default="1200",
             )
-            or "800"
+            or "1200"
         ),
         system_prompt=env_first(
             "QWEN_SYSTEM_PROMPT",

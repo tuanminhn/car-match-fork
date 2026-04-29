@@ -201,8 +201,6 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
         const socket = socketRef.current;
         if (!sessionActiveRef.current || !realtimeReadyRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
         sendRealtimeEvent({ type: 'input_audio_buffer.append', audio: float32ToPcmBase64(input) });
-        // Explicitly commit the audio buffer after appending to trigger VAD processing
-        sendRealtimeEvent({ type: 'input_audio_buffer.commit' });
       };
 
       micRef.current = { stream, audioContext, source, filter, analyser, processor, sink, rafId: null };
