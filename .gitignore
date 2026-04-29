@@ -1,44 +1,40 @@
 ```
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
+*.pyc
+*.pyo
+*.pyd
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+env/
+venv/
+.venv/
+.ENV
+.python-version
+.pytest_cache/
+.mypy_cache/
 
 # Node.js
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.npm
+.yarn-integrity
+node_modules/
+jspm_packages/
 
-# Virtual environments
-venv/
-env/
-ENV/
-.venv/
-.env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
+# Build outputs
+dist/
+build/
+coverage/
+htmlcov/
+*.out
+*.exe
+*.dll
+*.so
+*.a
+*.o
+*.obj
 
 # Logs
 *.log
@@ -48,26 +44,38 @@ ENV/
 .env.local
 *.env.*
 
-# Coverage
-.coverage
-coverage/
-htmlcov/
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
 
-# Build outputs
-build/
-dist/
-*.out
-*.exe
-*.dll
-*.so
-*.a
-*.obj
-
-# OS
+# OS generated
 .DS_Store
 Thumbs.db
 
-# Temporary files
-*.tmp
-*.temp
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```
