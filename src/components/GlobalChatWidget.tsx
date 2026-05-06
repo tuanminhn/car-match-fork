@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Mic } from 'lucide-react';
 import { useProfile } from '../context/ProfileContext';
 import { askQwenAssistant, extractProfileUpdates, type AssistantMessage } from '../lib/aiAssistant';
@@ -34,6 +34,7 @@ const starterPrompts = {
 export default function GlobalChatWidget() {
   const { language, t } = useLanguage();
   const location = useLocation();
+  const navigate = useNavigate();
   const { profile, selections, updateProfile, aiRecommendationControls, setAIRecommendationControls } = useProfile();
   const { vehicleIds } = useCompare();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -165,6 +166,7 @@ export default function GlobalChatWidget() {
       powertrainFilter: 'all' | 'ice' | 'hybrid' | 'phev' | 'ev';
     };
     profilePatch: Partial<UserProfile>;
+    navigateTo?: string;
   } {
     const plain = normalizePlain(text);
     const controls: {
@@ -180,6 +182,7 @@ export default function GlobalChatWidget() {
     };
     const profilePatch: Partial<UserProfile> = {};
     let signalCount = 0;
+    let navigateTo: string | undefined;
 
     if (plain.includes('phev')) {
       controls.powertrainFilter = 'phev';
@@ -245,10 +248,38 @@ export default function GlobalChatWidget() {
 
     const intentSignals = ['xe', 'car', 'recommend', 'de xuat', 'goi y', 'shortlist', 'chon', 'mua', 'tim xe'];
     const hasIntentSignal = intentSignals.some(signal => plain.includes(signal));
+    
+    // Detect navigation intent
+    const listIntentPatterns = ['danh sach', 'xem tat ca', 'listing', 'all cars', 'all vehicles', 'cac dong xe', 'xem xe'];
+    const detailIntentMatch = plain.match(/(?:xem|show|view|chi tiet|details).+(?:xe|car|model)?\s*(?:la|ten|called)?\s*["']?([^"']+)["']?/i);
+    const compareIntentPatterns = ['so sanh', 'compare', 'comparison'];
+    const quoteIntentPatterns = ['bao gia', 'quote', 'price quote', 'nhan bao gia'];
+    const bookingIntentPatterns = ['dat lich', 'booking', 'book', 'lich hen', 'showroom'];
+    
+    if (listIntentPatterns.some(p => plain.includes(p))) {
+      navigateTo = '/cars';
+    } else if (detailIntentMatch) {
+      const modelName = detailIntentMatch[1].trim().toLowerCase();
+      const foundVehicle = vehicles.find(v => 
+        v.name.toLowerCase().includes(modelName) || 
+        v.modelSlug.toLowerCase().includes(modelName)
+      );
+      if (foundVehicle) {
+        navigateTo = `/vehicle/${foundVehicle.modelSlug}`;
+      }
+    } else if (compareIntentPatterns.some(p => plain.includes(p))) {
+      navigateTo = '/compare';
+    } else if (quoteIntentPatterns.some(p => plain.includes(p))) {
+      navigateTo = '/quote';
+    } else if (bookingIntentPatterns.some(p => plain.includes(p))) {
+      navigateTo = '/booking';
+    }
+
     return {
       shouldApply: signalCount > 0 || hasIntentSignal,
       controls,
       profilePatch,
+      navigateTo,
     };
   }
 
@@ -300,6 +331,11 @@ export default function GlobalChatWidget() {
           source: 'ai-copilot',
           updatedAt: Date.now(),
         });
+      }
+
+      // Handle navigation intent
+      if (inferred.navigateTo) {
+        navigate(inferred.navigateTo);
       }
 
       const reply = await askQwenAssistant(conversation, {
