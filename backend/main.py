@@ -331,6 +331,19 @@ async def send_realtime_event(
     await dashscope_ws.send(json.dumps(payload))
 
 
+async def send_client_error(websocket: WebSocket, message: str, code: int | None = None) -> None:
+    error: dict[str, object] = {"message": message}
+    if code is not None:
+        error["code"] = code
+    await websocket.send_text(json.dumps({"type": "error", "error": error}))
+
+
+async def close_client(websocket: WebSocket, code: int, reason: str) -> None:
+    # WebSocket close reasons are limited to 123 bytes.
+    safe_reason = reason.encode("utf-8")[:120].decode("utf-8", errors="ignore")
+    await websocket.close(code=code, reason=safe_reason)
+
+
 async def apply_realtime_session_config(
     dashscope_ws: websockets.ClientConnection,
     voice: str | None,
@@ -635,32 +648,18 @@ async def realtime_proxy(websocket: WebSocket) -> None:
                 await websocket.send_text(message)
         except websockets.exceptions.ConnectionClosed as exc:
             reason = exc.reason or "No close reason provided by realtime model."
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error": {
-                            "message": (
-                                "Realtime model connection closed "
-                                f"(code={exc.code}): {reason}"
-                            ),
-                            "code": exc.code,
-                        },
-                    }
-                )
+            detail = (
+                "Realtime model connection closed "
+                f"(code={exc.code}): {reason}"
             )
-            raise
+            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                await send_client_error(websocket, detail, exc.code)
+                await close_client(websocket, 1011, detail)
         else:
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error": {
-                            "message": "Realtime model connection closed without a close reason.",
-                        },
-                    }
-                )
-            )
+            detail = "Realtime model connection closed without a close reason."
+            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+                await send_client_error(websocket, detail)
+                await close_client(websocket, 1011, detail)
 
     client_task = asyncio.create_task(client_to_dashscope())
     dashscope_task = asyncio.create_task(dashscope_to_client())
