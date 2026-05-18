@@ -59,6 +59,7 @@ const INITIAL_MESSAGE: TimelineMessage = {
   text: "Tap the mic to start realtime voice mode. Once connected, just speak naturally and pause when you're done.",
 };
 const INITIAL_METER = new Array(18).fill(0.08);
+const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 
 export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProps) {
@@ -177,7 +178,7 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: false },
       });
-      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const audioContext = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
       if (audioContext.state === 'suspended') await audioContext.resume();
       const source = audioContext.createMediaStreamSource(stream);
       const filter = audioContext.createBiquadFilter();
@@ -198,9 +199,11 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
 
       processor.onaudioprocess = event => {
         const input = event.inputBuffer.getChannelData(0);
+        const inputSampleRate = event.inputBuffer.sampleRate || audioContext.sampleRate;
+        const pcmInput = resampleFloat32(input, inputSampleRate, INPUT_SAMPLE_RATE);
         const socket = socketRef.current;
         if (!sessionActiveRef.current || !realtimeReadyRef.current || !socket || socket.readyState !== WebSocket.OPEN) return;
-        sendRealtimeEvent({ type: 'input_audio_buffer.append', audio: float32ToPcmBase64(input) });
+        sendRealtimeEvent({ type: 'input_audio_buffer.append', audio: float32ToPcmBase64(pcmInput) });
       };
 
       micRef.current = { stream, audioContext, source, filter, analyser, processor, sink, rafId: null };
@@ -265,12 +268,13 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
       setError('Realtime connection failed.');
       if (sessionActiveRef.current) setPhaseAndStatus('idle', 'Realtime connection failed.');
     });
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', event => {
       realtimeReadyRef.current = false;
       responseActiveRef.current = false;
       if (!sessionActiveRef.current) return;
       void endVoiceSession({ preserveMessages: true, quiet: true });
-      const detail = lastRealtimeErrorRef.current ?? 'Realtime session ended.';
+      const closeDetail = event.reason ? `Realtime session ended (${event.code}): ${event.reason}` : `Realtime session ended (${event.code}).`;
+      const detail = lastRealtimeErrorRef.current ?? closeDetail;
       setError(detail);
       setPhaseAndStatus('idle', detail);
     });
@@ -634,6 +638,25 @@ function float32ToPcmBase64(samples: Float32Array) {
     offset += 2;
   }
   return bytesToBase64(bytes);
+}
+
+function resampleFloat32(samples: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) return samples;
+  const ratio = sourceRate / targetRate;
+  const nextLength = Math.max(1, Math.round(samples.length / ratio));
+  const resampled = new Float32Array(nextLength);
+
+  for (let index = 0; index < nextLength; index += 1) {
+    const sourceIndex = index * ratio;
+    const leftIndex = Math.floor(sourceIndex);
+    const rightIndex = Math.min(samples.length - 1, leftIndex + 1);
+    const weight = sourceIndex - leftIndex;
+    const left = samples[leftIndex] ?? 0;
+    const right = samples[rightIndex] ?? left;
+    resampled[index] = left + (right - left) * weight;
+  }
+
+  return resampled;
 }
 
 function decodePcmBase64(base64Pcm: string) {

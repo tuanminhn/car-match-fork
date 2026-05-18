@@ -630,8 +630,37 @@ async def realtime_proxy(websocket: WebSocket) -> None:
             )
 
     async def dashscope_to_client() -> None:
-        async for message in dashscope_ws:
-            await websocket.send_text(message)
+        try:
+            async for message in dashscope_ws:
+                await websocket.send_text(message)
+        except websockets.exceptions.ConnectionClosed as exc:
+            reason = exc.reason or "No close reason provided by realtime model."
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "message": (
+                                "Realtime model connection closed "
+                                f"(code={exc.code}): {reason}"
+                            ),
+                            "code": exc.code,
+                        },
+                    }
+                )
+            )
+            raise
+        else:
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "message": "Realtime model connection closed without a close reason.",
+                        },
+                    }
+                )
+            )
 
     client_task = asyncio.create_task(client_to_dashscope())
     dashscope_task = asyncio.create_task(dashscope_to_client())

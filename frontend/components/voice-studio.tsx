@@ -70,6 +70,7 @@ const INITIAL_MESSAGE: TimelineMessage = {
 };
 
 const INITIAL_METER = new Array(18).fill(0.08);
+const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 
 export function VoiceStudio() {
@@ -99,6 +100,7 @@ export function VoiceStudio() {
   const messagesRef = useRef<TimelineMessage[]>([INITIAL_MESSAGE]);
   const assistantDraftIdRef = useRef<string | null>(null);
   const assistantTranscriptRef = useRef("");
+  const lastRealtimeErrorRef = useRef<string | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -178,6 +180,7 @@ export function VoiceStudio() {
     }
 
     setError(null);
+    lastRealtimeErrorRef.current = null;
     setPhaseAndStatus("requesting", "Waiting for microphone permission...");
 
     try {
@@ -190,7 +193,7 @@ export function VoiceStudio() {
         },
       });
 
-      const audioContext = new AudioContext({ sampleRate: 16000 });
+      const audioContext = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
       if (audioContext.state === "suspended") {
         await audioContext.resume();
       }
@@ -217,6 +220,8 @@ export function VoiceStudio() {
 
       processor.onaudioprocess = (event) => {
         const input = event.inputBuffer.getChannelData(0);
+        const inputSampleRate = event.inputBuffer.sampleRate || audioContext.sampleRate;
+        const pcmInput = resampleFloat32(input, inputSampleRate, INPUT_SAMPLE_RATE);
         const socket = socketRef.current;
         if (
           !sessionActiveRef.current ||
@@ -229,7 +234,7 @@ export function VoiceStudio() {
 
         sendRealtimeEvent({
           type: "input_audio_buffer.append",
-          audio: float32ToPcmBase64(input),
+          audio: float32ToPcmBase64(pcmInput),
         });
       };
 
@@ -309,6 +314,7 @@ export function VoiceStudio() {
 
     socket.addEventListener("open", () => {
       setError(null);
+      lastRealtimeErrorRef.current = null;
       sendRealtimeEvent({
         type: "session.configure",
         voice,
@@ -333,15 +339,19 @@ export function VoiceStudio() {
       }
     });
 
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", (event) => {
       realtimeReadyRef.current = false;
       responseActiveRef.current = false;
       if (!sessionActiveRef.current) {
         return;
       }
       void endVoiceSession({ preserveMessages: true, quiet: true });
-      setError("Realtime session ended.");
-      setPhaseAndStatus("idle", "Realtime session ended.");
+      const closeDetail = event.reason
+        ? `Realtime session ended (${event.code}): ${event.reason}`
+        : `Realtime session ended (${event.code}).`;
+      const detail = lastRealtimeErrorRef.current ?? closeDetail;
+      setError(detail);
+      setPhaseAndStatus("idle", detail);
     });
   }
 
@@ -453,6 +463,7 @@ export function VoiceStudio() {
           typeof (event.error as { message?: unknown }).message === "string"
             ? String((event.error as { message?: unknown }).message)
             : "Realtime request failed.";
+        lastRealtimeErrorRef.current = detail;
         setError(detail);
         if (sessionActiveRef.current) {
           setPhaseAndStatus("listening", "The mic is still on. Try again.");
@@ -791,6 +802,25 @@ function float32ToPcmBase64(samples: Float32Array) {
     offset += 2;
   }
   return bytesToBase64(bytes);
+}
+
+function resampleFloat32(samples: Float32Array, sourceRate: number, targetRate: number) {
+  if (sourceRate === targetRate) return samples;
+  const ratio = sourceRate / targetRate;
+  const nextLength = Math.max(1, Math.round(samples.length / ratio));
+  const resampled = new Float32Array(nextLength);
+
+  for (let index = 0; index < nextLength; index += 1) {
+    const sourceIndex = index * ratio;
+    const leftIndex = Math.floor(sourceIndex);
+    const rightIndex = Math.min(samples.length - 1, leftIndex + 1);
+    const weight = sourceIndex - leftIndex;
+    const left = samples[leftIndex] ?? 0;
+    const right = samples[rightIndex] ?? left;
+    resampled[index] = left + (right - left) * weight;
+  }
+
+  return resampled;
 }
 
 function decodePcmBase64(base64Pcm: string) {
