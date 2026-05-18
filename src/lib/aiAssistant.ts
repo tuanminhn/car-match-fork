@@ -52,7 +52,6 @@ function isVietnamese(language?: AppLanguage): boolean {
   return language !== 'en';
 }
 
-const DEFAULT_BASE_URL = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
 const DEFAULT_MODEL = 'qwen-turbo';
 
 function buildProfileSummary(profile?: UserProfile): string {
@@ -125,8 +124,10 @@ export function buildCarAssistantSystemPrompt(context: AssistantContext): string
   return renderPromptTemplate(template, context);
 }
 
-interface ChatCompletionResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+interface BackendChatResponse {
+  assistant?: {
+    text?: string;
+  };
 }
 
 function asAnalyticsRecord(value: unknown): Record<string, unknown> | undefined {
@@ -300,25 +301,18 @@ export async function extractProfileUpdates(
   messages: AssistantMessage[],
   context: AssistantContext,
 ): Promise<ProfileUpdateSuggestion[]> {
-  const apiKey = import.meta.env.VITE_QWEN_API_KEY;
-  if (!apiKey) return [];
-
   const lastUserMessage = [...messages].reverse().find(m => m.role === 'user')?.content;
   if (!lastUserMessage) return [];
 
-  const baseUrl = import.meta.env.VITE_QWEN_API_BASE_URL || DEFAULT_BASE_URL;
-  const model = import.meta.env.VITE_QWEN_MODEL || DEFAULT_MODEL;
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/chat-turn`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model,
-        temperature: 0.2,
         messages: [
           { role: 'system', content: buildProfileExtractorPrompt(context, lastUserMessage) },
           { role: 'user', content: 'Extract profile updates from my last message.' },
@@ -328,8 +322,8 @@ export async function extractProfileUpdates(
 
     if (!response.ok) return [];
 
-    const data = (await response.json()) as ChatCompletionResponse;
-    const output = data.choices?.[0]?.message?.content?.trim();
+    const data = (await response.json()) as BackendChatResponse;
+    const output = data.assistant?.text?.trim();
     if (!output) return [];
 
     // Extract JSON from response
@@ -344,30 +338,19 @@ export async function extractProfileUpdates(
 }
 
 export async function askQwenAssistant(messages: AssistantMessage[], context: AssistantContext): Promise<string> {
-  const apiKey = import.meta.env.VITE_QWEN_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing VITE_QWEN_API_KEY. Add it to your .env file to enable the assistant.');
-  }
-
-  const baseUrl = import.meta.env.VITE_QWEN_API_BASE_URL || DEFAULT_BASE_URL;
-  const model = import.meta.env.VITE_QWEN_MODEL || DEFAULT_MODEL;
-
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 25000);
-
   const preparedMessages = trimConversation(messages);
 
   try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/chat-turn`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model,
-        temperature: 0.4,
         messages: [
           { role: 'system', content: buildCarAssistantSystemPrompt(context) },
           ...preparedMessages,
@@ -377,20 +360,20 @@ export async function askQwenAssistant(messages: AssistantMessage[], context: As
 
     if (!response.ok) {
       const raw = await response.text();
-      throw new Error(`Qwen request failed (${response.status}): ${raw.slice(0, 240)}`);
+      throw new Error(`Assistant API request failed (${response.status}): ${raw.slice(0, 240)}`);
     }
 
-    const data = (await response.json()) as ChatCompletionResponse;
-    const output = data.choices?.[0]?.message?.content?.trim();
+    const data = (await response.json()) as BackendChatResponse;
+    const output = data.assistant?.text?.trim();
     if (!output) {
       throw new Error('Qwen returned an empty response.');
     }
     return normalizeAssistantReply(output);
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      return normalizeAssistantReply(buildLocalFallbackAnswer(preparedMessages, context));
+      throw new Error('Assistant API request timed out.');
     }
-    return normalizeAssistantReply(buildLocalFallbackAnswer(preparedMessages, context));
+    throw error;
   } finally {
     window.clearTimeout(timeoutId);
   }

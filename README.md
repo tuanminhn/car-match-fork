@@ -48,8 +48,7 @@ QWEN_OMNI_REALTIME_VI_VOICE=Hana
 Frontend (`src/`) variables:
 
 ```bash
-VITE_QWEN_API_KEY=...
-VITE_QWEN_API_BASE_URL=https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+VITE_API_BASE_URL=http://127.0.0.1:8000
 VITE_QWEN_MODEL=qwen-flash
 # local only
 VITE_REALTIME_WS_URL=ws://127.0.0.1:8000/realtime

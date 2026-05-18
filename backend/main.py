@@ -206,6 +206,15 @@ class ConversationMessage(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
 
 
+class ChatCompletionMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str = Field(min_length=1, max_length=12000)
+
+
+class ChatTurnRequest(BaseModel):
+    messages: list[ChatCompletionMessage] = Field(min_length=1, max_length=16)
+
+
 class TextTurnRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     messages: list[ConversationMessage] = Field(default_factory=list)
@@ -218,7 +227,7 @@ def require_api_key() -> str:
         return settings.api_key
     raise HTTPException(
         status_code=500,
-        detail="Missing DASHSCOPE_API_KEY or VITE_QWEN_API_KEY.",
+        detail="Missing DASHSCOPE_API_KEY.",
     )
 
 
@@ -462,6 +471,26 @@ async def generate_reply(
     return normalize_text_for_speech(str(content or "").strip())
 
 
+async def generate_chat_completion(messages: list[ChatCompletionMessage]) -> str:
+    payload = {
+        "model": settings.chat_model,
+        "messages": [message.model_dump() for message in messages[-16:]],
+        "temperature": settings.chat_temperature,
+        "max_tokens": settings.chat_max_tokens,
+        "top_p": settings.chat_top_p,
+        "enable_thinking": settings.enable_thinking,
+    }
+    data = await post_json(settings.compatible_endpoint, payload)
+    choice = (data.get("choices") or [{}])[0]
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if isinstance(content, list):
+        return normalize_text_for_speech(
+            " ".join(str(item) for item in content if item).strip()
+        )
+    return normalize_text_for_speech(str(content or "").strip())
+
+
 async def synthesize_speech(text: str, voice: str, language_hint: str | None) -> dict:
     input_payload: dict[str, str] = {
         "text": text,
@@ -559,6 +588,18 @@ async def health() -> dict:
         "ttsModel": settings.tts_model,
         "realtimeModel": settings.realtime_model,
         "realtimeVoice": settings.realtime_default_voice,
+    }
+
+
+@app.post("/chat-turn")
+async def chat_turn(payload: ChatTurnRequest) -> dict:
+    assistant_text = await generate_chat_completion(payload.messages)
+    if not assistant_text:
+        raise HTTPException(status_code=502, detail="Qwen returned an empty response.")
+    return {
+        "assistant": {
+            "text": assistant_text,
+        }
     }
 
 
