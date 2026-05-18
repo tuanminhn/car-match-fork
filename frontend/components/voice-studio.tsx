@@ -309,7 +309,9 @@ export function VoiceStudio() {
   }
 
   function connectRealtimeSocket() {
-    const socket = new WebSocket(getRealtimeWsUrl());
+    const realtimeUrl = getRealtimeWsUrl();
+    console.info("[voice] connecting realtime websocket", realtimeUrl);
+    const socket = new WebSocket(realtimeUrl);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
@@ -340,6 +342,11 @@ export function VoiceStudio() {
     });
 
     socket.addEventListener("close", (event) => {
+      console.info("[voice] realtime websocket closed", {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
       realtimeReadyRef.current = false;
       responseActiveRef.current = false;
       if (!sessionActiveRef.current) {

@@ -344,6 +344,13 @@ async def close_client(websocket: WebSocket, code: int, reason: str) -> None:
     await websocket.close(code=code, reason=safe_reason)
 
 
+async def fail_realtime_client(websocket: WebSocket, message: str, code: int = 1011) -> None:
+    with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+        await send_client_error(websocket, message, code)
+    with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+        await close_client(websocket, code, message)
+
+
 async def apply_realtime_session_config(
     dashscope_ws: websockets.ClientConnection,
     voice: str | None,
@@ -580,11 +587,27 @@ async def realtime_proxy(websocket: WebSocket) -> None:
         await websocket.close(code=1011)
         return
 
-    await apply_realtime_session_config(
-        dashscope_ws=dashscope_ws,
-        voice=None,
-        language_hint="auto",
-    )
+    try:
+        await apply_realtime_session_config(
+            dashscope_ws=dashscope_ws,
+            voice=None,
+            language_hint="auto",
+        )
+    except websockets.exceptions.ConnectionClosed as exc:
+        reason = exc.reason or "No close reason provided by realtime model."
+        await fail_realtime_client(
+            websocket,
+            f"Realtime model rejected initial session update (code={exc.code}): {reason}",
+        )
+        await dashscope_ws.close()
+        return
+    except Exception as exc:
+        await fail_realtime_client(
+            websocket,
+            f"Failed to configure realtime model session: {exc}",
+        )
+        await dashscope_ws.close()
+        return
 
     async def client_to_dashscope() -> None:
         while True:
@@ -652,14 +675,10 @@ async def realtime_proxy(websocket: WebSocket) -> None:
                 "Realtime model connection closed "
                 f"(code={exc.code}): {reason}"
             )
-            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
-                await send_client_error(websocket, detail, exc.code)
-                await close_client(websocket, 1011, detail)
+            await fail_realtime_client(websocket, detail)
         else:
             detail = "Realtime model connection closed without a close reason."
-            with contextlib.suppress(RuntimeError, WebSocketDisconnect):
-                await send_client_error(websocket, detail)
-                await close_client(websocket, 1011, detail)
+            await fail_realtime_client(websocket, detail)
 
     client_task = asyncio.create_task(client_to_dashscope())
     dashscope_task = asyncio.create_task(dashscope_to_client())
@@ -670,27 +689,23 @@ async def realtime_proxy(websocket: WebSocket) -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
         for task in done:
-            exc = task.exception()
+            with contextlib.suppress(asyncio.CancelledError):
+                exc = task.exception()
+            if task.cancelled():
+                continue
             if exc is None:
                 continue
             if isinstance(exc, WebSocketDisconnect):
                 break
-            await websocket.send_text(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "error": {
-                            "message": str(exc),
-                        },
-                    }
-                )
-            )
+            await fail_realtime_client(websocket, str(exc))
         for task in pending:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
     except WebSocketDisconnect:
         pass
+    except Exception as exc:
+        await fail_realtime_client(websocket, f"Realtime proxy failed: {exc}")
     finally:
         for task in (client_task, dashscope_task):
             if not task.done():
@@ -698,6 +713,8 @@ async def realtime_proxy(websocket: WebSocket) -> None:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         await dashscope_ws.close()
+        with contextlib.suppress(RuntimeError, WebSocketDisconnect):
+            await close_client(websocket, 1000, "Realtime session closed.")
 
 
 @app.post("/text-turn")

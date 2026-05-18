@@ -250,7 +250,9 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
   }
 
   function connectRealtimeSocket() {
-    const socket = new WebSocket(getRealtimeWsUrl());
+    const realtimeUrl = getRealtimeWsUrl();
+    console.info('[voice] connecting realtime websocket', realtimeUrl);
+    const socket = new WebSocket(realtimeUrl);
     socketRef.current = socket;
     socket.addEventListener('open', () => {
       setError(null);
@@ -269,6 +271,11 @@ export default function VoiceModeOverlay({ open, onClose }: VoiceModeOverlayProp
       if (sessionActiveRef.current) setPhaseAndStatus('idle', 'Realtime connection failed.');
     });
     socket.addEventListener('close', event => {
+      console.info('[voice] realtime websocket closed', {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean,
+      });
       realtimeReadyRef.current = false;
       responseActiveRef.current = false;
       if (!sessionActiveRef.current) return;
